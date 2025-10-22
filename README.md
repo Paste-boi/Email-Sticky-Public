@@ -170,5 +170,5 @@ C:\Users\<YourName>\.ai_email_sticky\
 ---
 
 ### 👨‍💻 Credits
-Developed collaboratively by **Peyton Strippelhoff** and **ChatGPT (GPT-5)**  
+Developed collaboratively by **Paste-Boi** and **ChatGPT (GPT-5)**  
 Focused on **productivity, automation, and information clarity**.
