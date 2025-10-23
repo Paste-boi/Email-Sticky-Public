@@ -441,6 +441,7 @@ class StickyUI(tk.Tk):
         super().__init__()
         self.cfg = cfg
         self.title("AI Email Sticky Note")
+        self._last_rows_key = None
 
         # UI prefs
         self.font_size = int(cfg.get("ui","font_size", fallback="10"))
@@ -527,7 +528,7 @@ class StickyUI(tk.Tk):
         self.canvas.pack(side="left", fill="both", expand=True, padx=(6,0), pady=(0,6))
 
         self.list_frame = tk.Frame(self.canvas, bg=self.theme["bg"])
-        self.canvas.create_window((0,0), window=self.list_frame, anchor="nw")
+        self.list_win = self.canvas.create_window((0, 0), window=self.list_frame, anchor="nw")
         self.list_frame.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
 
         # Status bar
@@ -587,20 +588,52 @@ class StickyUI(tk.Tk):
         self.after(self.ui_refresh_seconds * 1000, self.periodic_refresh)
 
     def refresh_ui(self):
-        for c in self.list_frame.winfo_children():
-            c.destroy()
-
+        # Theme refresh
         self.canvas.configure(bg=self.theme["bg"])
         self.list_frame.configure(bg=self.theme["bg"])
 
         rows, active_count, completed_count = list_active_tasks(self.retention_hours, return_counts=True)
 
-        if not rows:
-            tk.Label(self.list_frame, text="No tasks (yet!)",
-                     bg=self.theme["bg"], fg=self.theme["fg"]).pack(anchor="w", padx=6, pady=6)
-        else:
+        rows_key= (
+            tuple((tid, int(done)) for (tid, _, done, _, _) in rows),
+            active_count, completed_count,
+            self.theme["bg"],
+        )
+        if rows_key == self._last_rows_key:
+            self.statusbar.config(text=f"Active: {active_count}  |  Completed: {completed_count}")
+            return
+        self._last_rows_key = rows_key
+
+        # Remember scroll position
+        y0 = self.canvas.yview()
+
+        # Build offscreen
+        temp = tk.Frame(self.canvas, bg=self.theme["bg"])
+        self.build_rows(temp, rows)
+
+        # Swap atomically
+        old = self.list_frame
+        self.canvas.itemconfigure(self.list_win, window=temp)
+        self.list_frame = temp
+        self.list_frame.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        if old is not None:
+            old.destroy()
+
+        # Restore scroll
+        if y0 and len(y0) == 2:
+            self.canvas.yview_moveto(y0[0])
+
+        # Status
+        self.statusbar.config(text=f"Active: {active_count}  |  Completed: {completed_count}")
+
+
+    def build_rows(self, parent, rows):
+            if not rows:
+                tk.Label(parent, text="No tasks (yet!)",
+                        bg=self.theme["bg"], fg=self.theme["fg"]).pack(anchor="w", padx=6, pady=6)
+                return
+
             for tid, text, done, _, subject in rows:
-                # Parse standardized line
                 from_match = re.search(r"From:\s*(.*?)\s*\|", text)
                 recv_match = re.search(r"Received:\s*([^|]+)", text)
                 summ_match = re.search(r"Summary:\s*(.*)$", text)
@@ -608,40 +641,35 @@ class StickyUI(tk.Tk):
                 recv_val = recv_match.group(1).strip() if recv_match else ""
                 summ_val = summ_match.group(1).strip() if summ_match else text
 
-                row = tk.Frame(self.list_frame, bg=self.theme["bg"])
+                row = tk.Frame(parent, bg=self.theme["bg"])
                 row.pack(fill="x", pady=4, padx=6)
 
                 var = tk.BooleanVar(value=bool(done))
-                cb = tk.Checkbutton(row, variable=var, bg=self.theme["bg"],
-                                    font=("Segoe UI", max(self.font_size+2, 12)),
-                                    command=lambda t=tid, v=var: (mark_task_completed(t, v.get()), self.refresh_ui()))
-                cb.pack(side="left", padx=(0,6))
+                tk.Checkbutton(
+                    row, variable=var, bg=self.theme["bg"],
+                    font=("Segoe UI", max(self.font_size+2, 12)),
+                    command=lambda t=tid, v=var: (mark_task_completed(t, v.get()), self.refresh_ui())
+                ).pack(side="left", padx=(0, 6))
 
                 block = tk.Frame(row, bg=self.theme["bg"])
                 block.pack(side="left", fill="x", expand=True)
 
-                # Line 1
                 line1 = tk.Frame(block, bg=self.theme["bg"])
                 line1.pack(anchor="w", fill="x")
                 from_fg = self.theme["from_fg"] if self.colorful else self.theme["fg"]
                 recv_fg = self.theme["received_fg"] if self.colorful else self.theme["fg"]
-                from_lbl = tk.Label(line1, text=f"From: {from_val}", bg=self.theme["bg"],
-                                    fg=from_fg, font=("Segoe UI", 9, "bold"))
+
+                from_lbl = tk.Label(line1, text=f"From: {from_val}", bg=self.theme["bg"], fg=from_fg, font=("Segoe UI", 9, "bold"))
                 from_lbl.pack(side="left")
                 tk.Label(line1, text="   ", bg=self.theme["bg"], fg=self.theme["fg"]).pack(side="left")
-                recv_lbl = tk.Label(line1, text=f"Received: {recv_val}", bg=self.theme["bg"],
-                                    fg=recv_fg, font=("Segoe UI", 9))
+                recv_lbl = tk.Label(line1, text=f"Received: {recv_val}", bg=self.theme["bg"], fg=recv_fg, font=("Segoe UI", 9))
                 recv_lbl.pack(side="left")
 
-                # Line 2
                 line2 = tk.Frame(block, bg=self.theme["bg"])
                 line2.pack(anchor="w", fill="x")
-                sum_fg = self.theme["summary_fg"]
-                sum_label = tk.Label(line2, text=f"Summary: {summ_val}",
-                                     bg=self.theme["bg"], fg=sum_fg, wraplength=440, justify="left")
+                sum_label = tk.Label(line2, text=f"Summary: {summ_val}", bg=self.theme["bg"], fg=self.theme["summary_fg"], wraplength=440, justify="left")
                 sum_label.pack(side="left", fill="x", expand=True)
 
-                # NEW: If completed, paint entire note green for quick scan
                 if done:
                     green = COMPLETE_GREEN
                     from_lbl.configure(fg=green)
@@ -649,10 +677,8 @@ class StickyUI(tk.Tk):
                     sum_label.configure(fg=green)
 
                 tk.Button(row, text="❌", bg=self.theme["bg"], relief="flat",
-                          command=lambda t=tid: (delete_task(t), self.refresh_ui())).pack(side="right")
-
-        self.statusbar.config(text=f"Active: {active_count}  |  Completed: {completed_count}")
-
+                        command=lambda t=tid: (delete_task(t), self.refresh_ui())).pack(side="right")
+                
     # Help items (unchanged)
     def self_test_ai(self):
         sample_subject = "Order status and scheduling"
