@@ -93,7 +93,7 @@ username = you@gmail.com
 password = your_app_password
 folder = INBOX
 ssl = true
-cutoff_date = 2025-10-20
+cutoff_date = <DD-MMM-YYYY set to a recent date to avoid proccessing older emails>
 mark_as_read = false
 
 [ai]
